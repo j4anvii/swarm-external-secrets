@@ -55,6 +55,10 @@ jobs:
             # Full scan on push to main
             golangci-lint run ./...
           fi
+      
+      - name: Check for Deprecated Dependencies
+        run: |
+          source ./.github/workflows/test_workflow_scripts/check-deprecated-deps.sh
 
       - name: Check for uncommitted changes
         run: git diff --exit-code
