@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Sidecar that tails the plugin log file — makes errors visible via docker service logs
+  secrets-logger:
+    image: alpine:3.20
+    command: sh -c "while [ ! -f /run/swarm-external-secrets/plugin.log ]; do sleep 1; done; tail -F /run/swarm-external-secrets/plugin.log"
+    volumes:
+      - /run/swarm-external-secrets:/run/swarm-external-secrets:ro
+    deploy:
+      mode: global
+
+  # App that uses a VALID secret (should work)
+  app:
+    image: busybox:latest
+    command: >
+      sh -c "
+        while true; do
+          echo '--- Checking secrets ---'
+          if [ -f /run/secrets/good_secret ]; then
+            echo 'good_secret:' && cat /run/secrets/good_secret
+          else
+            echo 'good_secret: NOT AVAILABLE YET'
+          fi
+          sleep 5
+        done
+      "
+    secrets:
+      - good_secret
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+    networks:
+      - test-network
+
+  # App that uses a BAD secret (wrong field) — will fail and show errors in plugin log
+  app-bad-field:
+    image: busybox:latest
+    command: sh -c "cat /run/secrets/bad_field_secret && sleep 3600"
+    secrets:
+      - bad_field_secret
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+    networks:
+      - test-network
+
+  # App that uses a BAD secret (wrong path) — will fail and show errors in plugin log
+  app-bad-path:
+    image: busybox:latest
+    command: sh -c "cat /run/secrets/bad_path_secret && sleep 3600"
+    secrets:
+      - bad_path_secret
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+    networks:
+      - test-network
+
+secrets:
+  # This secret WILL work — path and field exist in Vault
+  good_secret:
+    driver: swarm-external-secrets:latest
+    labels:
+      vault_path: "database/mysql"
+      vault_field: "password"
+
+  # This secret WILL FAIL — wrong field name (nonexistent_field doesn't exist)
+  bad_field_secret:
+    driver: swarm-external-secrets:latest
+    labels:
+      vault_path: "database/mysql"
+      vault_field: "nonexistent_field"
+
+  # This secret WILL FAIL — wrong path (this/path/does/not/exist doesn't exist in Vault)
+  bad_path_secret:
+    driver: swarm-external-secrets:latest
+    labels:
+      vault_path: "this/path/does/not/exist"
+      vault_field: "password"
+
+networks:
+  test-network:
+    driver: overlay

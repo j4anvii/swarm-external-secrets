@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  app:
+    image: busybox:latest
+    command: >
+      sh -c "
+        while true; do
+          echo 'Current secret:' && cat /run/secrets/smoke_secret
+          sleep 5
+        done
+      "
+    secrets:
+      - smoke_secret
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+    networks:
+      - smoke-network
+
+  secrets-logger:
+    image: alpine:3.20
+    command: sh -c "while [ ! -f /run/swarm-external-secrets/plugin.log ]; do sleep 1; done; tail -F /run/swarm-external-secrets/plugin.log"
+    volumes:
+      - /run/swarm-external-secrets:/run/swarm-external-secrets:ro
+    deploy:
+      mode: global
+
+secrets:
+  smoke_secret:
+    driver: swarm-external-secrets:latest
+    labels:
+      vault_path: "database/mysql"
+      vault_field: "password"
+
+networks:
+  smoke-network:
+    driver: overlay
