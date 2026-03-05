@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # smoke-test-helper.sh
-# Shared helper functions sourced by smoke-test-vault.sh and smoke-test-openbao.sh
+# Shared helper functions sourced by smoke test scripts.
 
 RED='\033[0;31m'
 GRN='\033[0;32m'

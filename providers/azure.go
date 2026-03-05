@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os" // Imported to read environment variables
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore" // Imported for credentials
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 	"github.com/docker/go-plugins-helpers/secrets"
@@ -50,28 +53,44 @@ func (az *AzureProvider) Initialize(config map[string]string) error {
 	var cred azcore.TokenCredential
 	var err error
 
-	// Prioritize Service Principal credentials from environment variables.
-	tenantID := os.Getenv("AZURE_TENANT_ID")
-	clientID := os.Getenv("AZURE_CLIENT_ID")
-	clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
+	accessToken := strings.TrimSpace(config["AZURE_ACCESS_TOKEN"])
+	if accessToken == "" {
+		accessToken = strings.TrimSpace(os.Getenv("AZURE_ACCESS_TOKEN"))
+	}
 
-	if tenantID != "" && clientID != "" && clientSecret != "" {
-		log.Info("Authenticating with Azure using Service Principal credentials.")
-		cred, err = azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
-		if err != nil {
-			return fmt.Errorf("failed to create Azure credential using Service Principal: %w", err)
-		}
+	if accessToken != "" {
+		log.Info("Authenticating with Azure using static access token from AZURE_ACCESS_TOKEN.")
+		cred = &staticAccessTokenCredential{token: accessToken}
 	} else {
-		// Fallback to default credential chain (Managed Identity, Azure CLI, etc.)
-		log.Info("Service Principal credentials not found. Falling back to Default Azure Credential.")
-		cred, err = azidentity.NewDefaultAzureCredential(nil)
-		if err != nil {
-			return fmt.Errorf("failed to create Azure credential using default chain: %w", err)
+		// Prioritize Service Principal credentials from environment variables.
+		tenantID := os.Getenv("AZURE_TENANT_ID")
+		clientID := os.Getenv("AZURE_CLIENT_ID")
+		clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
+
+		if tenantID != "" && clientID != "" && clientSecret != "" {
+			log.Info("Authenticating with Azure using Service Principal credentials.")
+			cred, err = azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+			if err != nil {
+				return fmt.Errorf("failed to create Azure credential using Service Principal: %w", err)
+			}
+		} else {
+			// Fallback to default credential chain (Managed Identity, Azure CLI, etc.)
+			log.Info("Service Principal credentials not found. Falling back to Default Azure Credential.")
+			cred, err = azidentity.NewDefaultAzureCredential(nil)
+			if err != nil {
+				return fmt.Errorf("failed to create Azure credential using default chain: %w", err)
+			}
 		}
 	}
 
+	clientOptions := &azsecrets.ClientOptions{}
+	if shouldDisableChallengeResourceVerification(az.config.VaultURL) {
+		clientOptions.DisableChallengeResourceVerification = true
+		log.Info("Detected LocalStack-style Key Vault URL, disabling challenge resource verification.")
+	}
+
 	// Create a new secret client to interact with the Key Vault.
-	client, err := azsecrets.NewClient(az.config.VaultURL, cred, nil)
+	client, err := azsecrets.NewClient(az.config.VaultURL, cred, clientOptions)
 	if err != nil {
 		return fmt.Errorf("failed to create Azure Key Vault client: %w", err)
 	}
@@ -197,6 +216,35 @@ func (az *AzureProvider) extractSecretValue(secretValue string, req secrets.Requ
 	}
 
 	return []byte(secretValue), nil
+}
+
+type staticAccessTokenCredential struct {
+	token string
+}
+
+func (c *staticAccessTokenCredential) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	if strings.TrimSpace(c.token) == "" {
+		return azcore.AccessToken{}, fmt.Errorf("AZURE_ACCESS_TOKEN cannot be empty")
+	}
+
+	return azcore.AccessToken{
+		Token:     c.token,
+		ExpiresOn: time.Now().Add(1 * time.Hour),
+	}, nil
+}
+
+func shouldDisableChallengeResourceVerification(vaultURL string) bool {
+	parsed, err := url.Parse(vaultURL)
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+
+	return strings.Contains(host, "localstack")
 }
 
 // extractSecretValueByField extracts a specific field from a JSON secret string.
