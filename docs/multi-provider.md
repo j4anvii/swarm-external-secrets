@@ -183,7 +183,14 @@ secrets:
 ### Azure Key Vault
 - Uses REST API with OAuth2 authentication
 - Supports service principals and managed identities
+- Supports `AZURE_ACCESS_TOKEN` for static bearer-token auth (useful for LocalStack smoke tests)
 - Secret names must follow Azure naming conventions
+
+### Azure Key Vault with LocalStack
+- LocalStack Azure emulation requires `localstack/localstack-azure-alpha` and a valid `LOCALSTACK_AUTH_TOKEN`
+- Use `azlocal` (`localstack extensions install localstack-extension-azure-cli-local`) to create the vault and seed secrets
+- Run the smoke test with:
+  `LOCALSTACK_AUTH_TOKEN=<token> bash scripts/tests/smoke-test-azure.sh`
 
 ### OpenBao
 - Fully compatible with Vault API
